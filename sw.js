@@ -1,8 +1,8 @@
 /* NEXA Music — service worker : l'application s'ouvre sans connexion.
    Changez VERSION à chaque mise à jour du code pour forcer le rafraîchissement. */
-const VERSION = 'nexa-v1';
+const VERSION = 'nexa-v6';
 const ASSETS = [
-  './', './index.html', './style.css', './app.js', './pages.js', './meta.js', './intel.js', './eq.js',
+  './', './index.html', './style.css', './themes.css', './themes.js', './native.js', './covers.js', './app.js', './pages.js', './library.js', './player.js', './meta.js', './intel.js', './eq.js',
   './manifest.webmanifest', './logo.png', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'
 ];
 

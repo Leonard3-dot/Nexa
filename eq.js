@@ -6,11 +6,13 @@ const NEXA = g.NEXA = g.NEXA || {};
 const BANDS = [60, 230, 910, 3600, 14000];
 const LABELS = ['60 Hz', '230 Hz', '910 Hz', '3,6 kHz', '14 kHz'];
 const PRESETS = {
-  'Normal': [0, 0, 0, 0, 0], 'Basses+': [7, 5, 1, -1, -2], 'Voix': [-2, 0, 4, 4, 1], 'Aigus+': [-1, 0, 1, 5, 7],
-  'Rock': [5, 3, -2, 3, 5], 'Pop': [-1, 2, 4, 2, -1], 'Jazz': [3, 2, -2, 2, 4], 'Électro': [6, 4, 0, 3, 5], 'Acoustique': [3, 3, 2, 3, 2]
+  'Normal': [0, 0, 0, 0, 0], 'Bass Booster': [8, 6, 1, -1, -2], 'Rock': [5, 3, -2, 3, 5], 'Pop': [-1, 2, 4, 2, -1],
+  'Jazz': [3, 2, -2, 2, 4], 'Classical': [4, 2, -1, 2, 4], 'Hip-Hop': [6, 4, 0, 2, 3],
+  'Électro': [6, 4, 0, 3, 5], 'Voix': [-2, 0, 4, 4, 1], 'Aigus+': [-1, 0, 1, 5, 7], 'Acoustique': [3, 3, 2, 3, 2], 'Perso': [0, 0, 0, 0, 0]
 };
 let ctx = null, filters = [], pre = null, audioEl = null;
-const state = { on: false, preset: 'Normal', gains: [0, 0, 0, 0, 0] };
+const state = { on: false, preset: 'Normal', gains: [0, 0, 0, 0, 0], custom: [0, 0, 0, 0, 0] };
+const clampG = (a) => a.map((v) => Math.max(-12, Math.min(12, +v || 0)));
 const supported = () => !!(g.AudioContext || g.webkitAudioContext);
 
 function ensureGraph() {
@@ -42,12 +44,12 @@ NEXA.eq = {
   BANDS, LABELS, PRESETS, state, supported,
   init(audio, saved) {
     audioEl = audio;
-    if (saved && Array.isArray(saved.gains) && saved.gains.length === 5) { state.on = !!saved.on; state.preset = saved.preset || 'Normal'; state.gains = saved.gains.map((v) => Math.max(-12, Math.min(12, +v || 0))); }
+    if (saved && Array.isArray(saved.gains) && saved.gains.length === 5) { state.on = !!saved.on; state.preset = saved.preset || 'Normal'; state.gains = clampG(saved.gains); if (saved.preset === 'Basses+') state.preset = 'Bass Booster'; if (Array.isArray(saved.custom) && saved.custom.length === 5) state.custom = clampG(saved.custom); else if (state.preset === 'Perso') state.custom = state.gains.slice(); }
     audio.addEventListener('play', () => { if (state.on) { ensureGraph(); apply(); } resume(); });
   },
   setOn(on) { state.on = !!on; if (on && !ensureGraph()) { state.on = false; return false; } resume(); apply(); return true; },
-  setBand(i, v) { state.gains[i] = Math.max(-12, Math.min(12, +v)); state.preset = 'Perso'; apply(); },
-  setPreset(name) { if (!PRESETS[name]) return; state.preset = name; state.gains = PRESETS[name].slice(); apply(); },
-  snapshot() { return { on: state.on, preset: state.preset, gains: state.gains.slice() }; }
+  setBand(i, v) { state.gains[i] = Math.max(-12, Math.min(12, +v)); state.preset = 'Perso'; state.custom = state.gains.slice(); apply(); },
+  setPreset(name) { if (!PRESETS[name]) return; state.preset = name; state.gains = (name === 'Perso' ? state.custom : PRESETS[name]).slice(); apply(); },
+  snapshot() { return { on: state.on, preset: state.preset, gains: state.gains.slice(), custom: state.custom.slice() }; }
 };
 })(typeof window !== 'undefined' ? window : globalThis);

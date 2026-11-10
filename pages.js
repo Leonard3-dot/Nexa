@@ -34,6 +34,18 @@ const mixCard = (c, m) => `<div class="card mixcard" data-go="#/mix/${encodeURIC
 const trackCard = (c, t, list) => `<div class="card" data-shelf="${list}" data-id="${t.id}">${c.coverHTML(t)}<span class="pbtn over">${c.icon('play', 'f')}</span><div class="t">${c.esc(t.title)}</div><div class="a">${c.esc(t.artist)}</div></div>`;
 
 /* ===================== ACCUEIL ===================== */
+const albumCard = (c, n, ts) => `<div class="card" data-go="#/album/${encodeURIComponent(n)}">${c.coverHTML(c.firstWithCover(ts))}<div class="t">${c.esc(n)}</div><div class="a">${c.esc(ts[0].artist)}</div></div>`;
+function resumeCard(c) {
+  const cur = c.S.cur && c.S.tracks.get(c.S.cur);
+  if (!cur) return '';
+  const d = c.getDur(), pos = c.audio.currentTime || ((c.LS.get('pos', null) || {}).t || 0);
+  const pct = d ? Math.max(0, Math.min(100, (pos / d) * 100)) : 0;
+  const playing = !c.audio.paused && !!c.audio.src;
+  return `<div class="resume glass" data-act="open-np">${c.coverHTML(cur, 'md')}
+    <div class="meta"><span class="kicker">${playing ? 'En cours de lecture' : 'Reprendre la lecture'}</span><div class="t">${c.esc(cur.title)}</div><div class="a">${c.esc(cur.artist)}</div>
+    <div class="rbar"><i style="width:${pct.toFixed(1)}%"></i></div></div>
+    <button class="play-btn" data-act="resume" aria-label="Lecture / pause">${c.icon(playing ? 'pause' : 'play', 'f')}</button></div>`;
+}
 NEXA.defineView('home', (c) => {
   const { view, esc, icon, plural } = c;
   const all = c.allTracks(), now = Date.now();
@@ -46,32 +58,52 @@ NEXA.defineView('home', (c) => {
 
   const mixes = I().mixes(all, now);
   const lists = {}; mixes.forEach((m) => { lists['mix:' + m.id] = m.ids; });
-  let heroes = mixes.filter((m) => ['moment', 'recs', 'discover'].includes(m.id)).slice(0, 3);
+  // 4. Sélection recommandée
+  let heroes = mixes.filter((m) => ['moment', 'recs', 'top'].includes(m.id)).slice(0, 3);
   if (!heroes.length) { const ids = all.slice().sort(c.byRecent).map((t) => t.id); heroes = [{ id: 'recent', name: 'Votre musique', sub: 'Ajoutée récemment', ids, g: ['#4d7cff', '#a24bff'], icon: 'note' }]; lists['mix:recent'] = ids; }
+  // 5. Écoutés récemment
   const recent = [...new Set(c.S.history)].map((id) => c.S.tracks.get(id)).filter(Boolean).slice(0, 20);
-  const recs = I().recommend(all, { now, n: 8, exclude: new Set(recent.slice(0, 2).map((t) => t.id)) });
-  const added = all.slice().sort(c.byRecent).slice(0, 20);
+  const fresh = all.filter((t) => now - t.addedAt < 7 * 864e5).sort(c.byRecent).slice(0, 16);
+  // 6-7. Artistes et albums
   const artists = [...c.groupBy(all, 'artist')].filter(([n]) => n !== NEXA.UNKNOWN_ARTIST).sort((a, b) => b[1].length - a[1].length).slice(0, 14);
-  lists.recent = recent.map((t) => t.id); lists.recs = recs.map((t) => t.id); lists.added = added.map((t) => t.id);
+  const albums = [...c.groupBy(all.filter((t) => t.album !== NEXA.UNKNOWN_ALBUM), 'album')].sort((a, b) => b[1].length - a[1].length).slice(0, 14);
+  // 9. Découvertes : titres jamais écoutés, sinon ceux à redécouvrir
+  const disc = mixes.find((m) => m.id === 'discover') || mixes.find((m) => m.id === 'forgotten');
+  const discTracks = disc ? disc.ids.slice(0, 4).map((id) => c.S.tracks.get(id)).filter(Boolean) : [];
+  lists.recent = recent.map((t) => t.id); lists.fresh = fresh.map((t) => t.id); lists.disc = disc ? disc.ids : [];
   view._lists = lists;
+  // 10. Statistiques
+  const h = I().habits(all, now, c.LS.get('since', now));
 
   const hero = (m, i) => {
     const first = c.S.tracks.get(m.ids[0]);
     return `<article class="hero" style="--g1:${m.g[0]};--g2:${m.g[1]}" data-go="#/mix/${encodeURIComponent(m.id)}">
-      <div class="hero-tx"><span class="tag">${i === 0 ? 'Pour vous' : i === 1 ? 'Sélection' : 'À découvrir'}</span><h2>${esc(m.name)}</h2><p>${esc(m.sub)} · ${plural(m.ids.length, 'titre')}</p>
+      <div class="hero-tx"><span class="tag">${i === 0 ? 'Pour vous' : i === 1 ? 'Sélection' : 'À écouter'}</span><h2>${esc(m.name)}</h2><p>${esc(m.sub)} · ${plural(m.ids.length, 'titre')}</p>
         <button class="hero-play" data-shelf="mix:${m.id}" data-id="${m.ids[0]}">${icon('play', 'f')}<span>Lire</span></button></div>
       <div class="hero-art">${first ? c.coverHTML(first, 'hero-cover') : mixCover(c, m, 'hero-cover')}</div></article>`;
   };
+  const likedN = all.filter((t) => t.liked).length;
+  const plCards = `<div class="card" data-go="#/liked">${c.likedCover()}<div class="t">Titres likés</div><div class="a">${plural(likedN, 'titre')}</div></div>` +
+    c.S.playlists.slice().reverse().map((p) => `<div class="card" data-go="#/playlist/${p.id}">${c.playlistCover(p)}<div class="t">${esc(p.name)}</div><div class="a">${plural(p.ids.length, 'titre')}</div></div>`).join('') +
+    `<div class="card newpl" data-act="new-playlist"><div class="cover">${icon('plus')}</div><div class="t">Nouvelle playlist</div><div class="a">Créer</div></div>`;
+  const stat = (v, l) => `<div><b>${v}</b><span>${l}</span></div>`;
+
   view.innerHTML = top + `
-    <div class="greet"><h1>${greeting()}${name ? `, <span class="grad">${esc(name)}</span>` : ''}</h1><p class="muted">Votre musique, sans connexion.</p></div>
+    <div class="greet"><h1>${greeting()}${name ? `, <span class="grad">${esc(name)}</span>` : ''}</h1><p class="muted">Ressentez chaque note.</p></div>
+    ${resumeCard(c)}
+    <div class="sec-row"><h2 class="sec">Sélection recommandée</h2><button class="link" data-go="#/explore">Explorer</button></div>
     <div class="hero-row">${heroes.map(hero).join('')}</div>
+    ${fresh.length ? `<div class="sec-row"><h2 class="sec">Ajoutés récemment</h2></div><div class="shelf">${fresh.map((t) => trackCard(c, t, 'fresh')).join('')}</div>` : ''}
     ${recent.length ? `<div class="sec-row"><h2 class="sec">Écoutés récemment</h2><button class="link" data-go="#/history">Voir tout</button></div><div class="shelf">${recent.map((t) => trackCard(c, t, 'recent')).join('')}</div>` : ''}
-    <div class="sec-row"><h2 class="sec">Recommandés pour vous</h2>${mixes.find((m) => m.id === 'recs') ? '<button class="link" data-go="#/mix/recs">Voir tout</button>' : ''}</div>
-    <div class="rec-list">${recs.map((t) => recRow(c, t, 'recs')).join('')}</div>
-    ${mixes.length ? `<div class="sec-row"><h2 class="sec">Vos mixes</h2><button class="link" data-go="#/explore">Explorer</button></div><div class="shelf">${mixes.map((m) => mixCard(c, m)).join('')}</div>` : ''}
-    <h2 class="sec">Ajoutés récemment</h2><div class="shelf">${added.map((t) => trackCard(c, t, 'added')).join('')}</div>
-    ${artists.length ? `<h2 class="sec">Vos artistes</h2><div class="shelf">${artists.map(([n, ts]) => `<div class="card artist" data-go="#/artist/${encodeURIComponent(n)}">${c.coverHTML(c.firstWithCover(ts), 'round')}<div class="t">${esc(n)}</div><div class="a">${plural(ts.length, 'titre')}</div></div>`).join('')}</div>` : ''}
-    ${c.S.playlists.length ? `<h2 class="sec">Vos playlists</h2><div class="shelf">${c.S.playlists.map((p) => `<div class="card" data-go="#/playlist/${p.id}">${c.playlistCover(p)}<div class="t">${esc(p.name)}</div><div class="a">${plural(p.ids.length, 'titre')}</div></div>`).join('')}</div>` : ''}`;
+    ${artists.length ? `<div class="sec-row"><h2 class="sec">Vos artistes</h2><button class="link" data-go="#/library/artists">Voir tout</button></div><div class="shelf">${artists.map(([n, ts]) => `<div class="card artist" data-go="#/artist/${encodeURIComponent(n)}">${c.coverHTML(c.firstWithCover(ts), 'round')}<div class="t">${esc(n)}</div><div class="a">${plural(ts.length, 'titre')}</div></div>`).join('')}</div>` : ''}
+    ${albums.length ? `<div class="sec-row"><h2 class="sec">Vos albums</h2><button class="link" data-go="#/library/albums">Voir tout</button></div><div class="shelf">${albums.map(([n, ts]) => albumCard(c, n, ts)).join('')}</div>` : ''}
+    <div class="sec-row"><h2 class="sec">Vos playlists</h2><button class="link" data-go="#/library/playlists">Voir tout</button></div><div class="shelf">${plCards}</div>
+    ${discTracks.length ? `<div class="sec-row"><h2 class="sec">${disc.id === 'discover' ? 'Découvertes musicales' : 'À redécouvrir'}</h2><button class="link" data-go="#/mix/${disc.id}">Voir tout</button></div><div class="rec-list">${discTracks.map((t) => recRow(c, t, 'disc')).join('')}</div>` : ''}
+    <div class="sec-row"><h2 class="sec">Statistiques d’écoute</h2><button class="link" data-go="#/profile">Détails</button></div>
+    <div class="home-stats glass" data-go="#/profile">
+      <div class="hs-grid">${stat(h.plays, 'écoutes')}${stat(h.seconds ? c.fmtTotal(h.seconds) : '0 min', 'd’écoute')}${stat(h.liked, 'favoris')}</div>
+      <p class="habit">${h.plays ? `Vous écoutez surtout <b>${PERIOD_TXT[h.period] || 'le soir'}</b>${h.topArtist ? `, souvent <b>${esc(h.topArtist.name)}</b>` : ''}.` : 'Écoutez quelques titres : NEXA apprendra vos habitudes, sans rien envoyer en ligne.'}</p>
+    </div>`;
   bindLikes(c, view);
   c.syncInstallButtons();
 });
@@ -124,7 +156,7 @@ NEXA.defineView('profile', (c) => {
   const item = (ic, label, attrs, sub) => `<button class="s-item pf-item" ${attrs}>${icon(ic)}<span>${label}</span>${sub ? `<span class="sub">${sub}</span>` : ''}</button>`;
   view.innerHTML = `
     <header class="pf-head"><div class="avatar big"><img src="logo.png" alt=""></div>
-      <div><h1>${name ? esc(name) : 'Votre profil'}</h1><p class="muted">Auditeur NEXA · 100 % hors ligne</p></div></header>
+      <div><h1>${name ? esc(name) : 'Votre profil'}</h1><p class="muted">Auditeur NEXA</p></div></header>
     <div class="stats">${stat(h.plays, plural(h.plays, 'écoute').replace(/^\d+ /, ''))}${stat(h.seconds ? c.fmtTotal(h.seconds) : '0 min', 'd’écoute')}${stat(all.length, 'titres')}${stat(h.liked, 'favoris')}</div>
     <h2 class="sec">Vos habitudes</h2>
     <div class="glass panel">
@@ -135,7 +167,12 @@ NEXA.defineView('profile', (c) => {
     </div>
     <h2 class="sec">Réglages</h2>
     <div class="glass panel list">
+      ${item('palette', 'Apparence et thèmes', 'data-act="theme"', NEXA.themes ? esc(NEXA.themes.current.name) : '')}
+      ${NEXA.native && NEXA.native.available ? item('shield', 'Autorisations et arrière-plan', 'data-act="perms"', '') : ''}
+      ${item('image', 'Pochettes en ligne', 'data-act="covers"', c.LS.get('onlineCovers', false) ? 'Activé' : 'Désactivé')}
       ${item('sliders', 'Égaliseur', 'data-act="eq"', NEXA.eq.state.on ? NEXA.eq.state.preset : 'Désactivé')}
+      ${item('wave', 'Réglages de lecture', 'data-act="playback-settings"', NEXA.fx ? NEXA.fx.summary() : '')}
+      ${item('timer', 'Minuteur de sommeil', 'data-act="sleep"')}
       ${item('clock', 'Historique d’écoute', 'data-go="#/history"')}
       ${item('upload', 'Ajouter de la musique', 'data-act="import"')}
       ${item('folder', 'Scanner un dossier', 'data-act="import-folder"')}
@@ -189,5 +226,5 @@ function showSimilar(c) {
   });
 }
 
-NEXA.ui = { openEQ, showSimilar };
+NEXA.ui = { openEQ, showSimilar, resumeHTML: resumeCard };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -39,14 +39,16 @@ const extOf = (n) => (n.match(/\.([a-z0-9]+)$/i) || [])[1]?.toLowerCase() || '';
 const DB = (() => {
   let db;
   const open = () => new Promise((res, rej) => {
-    const r = indexedDB.open('hors-ligne-music', 1);
+    // Version 2 : ajoute le magasin « lyrics » (paroles). Les magasins existants et leurs données ne sont jamais touchés.
+    const r = indexedDB.open('hors-ligne-music', 2);
     r.onupgradeneeded = () => {
       const d = r.result;
-      d.createObjectStore('tracks', { keyPath: 'id' });
-      d.createObjectStore('files');
-      d.createObjectStore('playlists', { keyPath: 'id' });
+      if (!d.objectStoreNames.contains('tracks')) d.createObjectStore('tracks', { keyPath: 'id' });
+      if (!d.objectStoreNames.contains('files')) d.createObjectStore('files');
+      if (!d.objectStoreNames.contains('playlists')) d.createObjectStore('playlists', { keyPath: 'id' });
+      if (!d.objectStoreNames.contains('lyrics')) d.createObjectStore('lyrics');
     };
-    r.onsuccess = () => { db = r.result; res(); };
+    r.onsuccess = () => { db = r.result; db.onversionchange = () => db.close(); res(); };
     r.onerror = () => rej(r.error);
   });
   const all = (store) => new Promise((res, rej) => {
@@ -76,8 +78,8 @@ const DB = (() => {
   });
   const putTrack = (t) => put('tracks', ser(t));
   const removeTracks = (ids) => new Promise((res, rej) => {
-    const tx = db.transaction(['tracks', 'files'], 'readwrite');
-    ids.forEach((id) => { tx.objectStore('tracks').delete(id); tx.objectStore('files').delete(id); });
+    const tx = db.transaction(['tracks', 'files', 'lyrics'], 'readwrite');
+    ids.forEach((id) => { tx.objectStore('tracks').delete(id); tx.objectStore('files').delete(id); tx.objectStore('lyrics').delete(id); });
     tx.oncomplete = () => res(); tx.onerror = tx.onabort = () => rej(tx.error);
   });
   return { open, all, get, put, del, saveTrack, putTrack, removeTracks };
@@ -93,16 +95,20 @@ const S = {
   cur: null,
   base: [], queue: [], qi: -1,
   shuffle: false, repeat: 0,       // repeat : 0 = non, 1 = tout, 2 = un titre
-  libTab: 'playlists', sort: 'recent',
+  libTab: 'playlists', sort: 'recent', vol: 85,
   q: '', route: '', ios: []
 };
+/* Crochets offerts aux modules (player.js…) : ils évitent de modifier le noyau pour chaque nouvelle fonction.
+   gains : facteurs de volume temporaires (fondu, minuteur) ; le plus bas l'emporte. */
+const hooks = { stopAtEnd: null, onTrack: [] };
+const gains = {};
 
 const main = $('#main'), view = $('#view');
 const audio = $('#audio');
 const playerEl = $('#player'), npEl = $('#np'), queuePanel = $('#queue-panel');
 const sheetWrap = $('#sheet-wrap'), sheetEl = $('.sheet', sheetWrap);
 const toastEl = $('#toast');
-const fileInput = $('#file-input'), folderInput = $('#folder-input');
+const fileInput = $('#file-input'), folderInput = $('#folder-input'), coverInput = $('#cover-input');
 
 /* =====================================================================
    Couleurs et pochettes
@@ -195,6 +201,23 @@ function parseAPIC(d, v22) {
   else if (img[0] === 0x52 && img[1] === 0x49) type = 'image/webp';
   return type ? new Blob([img], { type }) : null;
 }
+/* Paroles intégrées (ID3 USLT) : encodage, langue (3 octets), description terminée par un zéro, puis le texte. */
+function parseUSLT(d) {
+  const enc = d[0]; let p = 4;
+  if (enc === 0 || enc === 3) { while (p < d.length && d[p] !== 0) p++; p++; }
+  else { while (p + 1 < d.length && !(d[p] === 0 && d[p + 1] === 0)) p += 2; p += 2; }
+  const body = new Uint8Array(d.length - p + 1); body[0] = enc; body.set(d.subarray(p), 1);
+  return decodeText(body);
+}
+/* Étiquette libre TXXX : description + valeur (certains logiciels y rangent les paroles). */
+function parseTXXX(d) {
+  const enc = d[0]; let p = 1;
+  if (enc === 0 || enc === 3) { while (p < d.length && d[p] !== 0) p++; } else { while (p + 1 < d.length && !(d[p] === 0 && d[p + 1] === 0)) p += 2; }
+  const desc = decodeText(Uint8Array.from([enc, ...d.subarray(1, p)]));
+  p += (enc === 0 || enc === 3) ? 1 : 2;
+  const body = new Uint8Array(Math.max(0, d.length - p) + 1); body[0] = enc; body.set(d.subarray(p), 1);
+  return { desc, text: decodeText(body) };
+}
 async function readID3(file) {
   const head = new Uint8Array(await file.slice(0, 10).arrayBuffer());
   if (String.fromCharCode(head[0], head[1], head[2]) !== 'ID3') return {};
@@ -219,6 +242,8 @@ async function readID3(file) {
     else if (id === 'TRCK' || id === 'TRK') out.no = parseInt(decodeText(data), 10) || 0;
     else if (id === 'TCON' || id === 'TCO') out.genre = NEXA.meta.cleanGenre(decodeText(data));
     else if (id === 'TDRC' || id === 'TYER' || id === 'TYE') out.year = out.year || NEXA.meta.cleanYear(decodeText(data));
+    else if (id === 'TXXX' && !out.lyrics) { try { const x = parseTXXX(data); if (/^(lyrics|unsyncedlyrics|uslt)$/i.test(x.desc) && x.text) out.lyrics = x.text; } catch { /* ignore */ } }
+    else if ((id === 'USLT' || id === 'ULT') && !out.lyrics) { try { out.lyrics = parseUSLT(data); } catch { /* ignore */ } }
     else if ((id === 'APIC' || id === 'PIC') && !coverBlob) { try { coverBlob = parseAPIC(data, ver === 2); } catch { /* ignore */ } }
     p = end;
   }
@@ -267,6 +292,7 @@ async function readMeta(file) {
     if (ext === 'mp3' || file.type === 'audio/mpeg') { out = await readID3(file); if (!out.title) out = { ...(await M.parseID3v1(file)), ...out }; }
     else if (ext === 'm4a' || ext === 'mp4' || ext === 'aac' || file.type === 'audio/mp4') out = await M.parseMP4(file);
     else if (ext === 'flac' || file.type === 'audio/flac') out = await M.parseFLAC(file);
+    else if (ext === 'ogg' || ext === 'oga' || ext === 'opus' || /ogg|opus/.test(file.type)) out = await M.parseOgg(file);
   } catch { out = {}; }
   if (out.coverBlob) { try { Object.assign(out, await makeThumb(out.coverBlob)); } catch { /* pochette illisible */ } }
   delete out.coverBlob;
@@ -284,33 +310,64 @@ async function readMeta(file) {
 function hydrate(t) {
   if (t.cover instanceof Blob) t.coverUrl = URL.createObjectURL(t.cover);
   if (!Array.isArray(t.hours)) t.hours = new Array(24).fill(0);
-  t.genre = t.genre || ''; t.year = t.year || 0; t.skips = t.skips || 0; t.lastPlayed = t.lastPlayed || 0;
+  t.folder = t.folder || ''; t.genre = t.genre || ''; t.year = t.year || 0; t.skips = t.skips || 0; t.lastPlayed = t.lastPlayed || 0;
   return t;
 }
+/* Dossier d'origine du fichier (disponible quand on choisit un dossier entier) */
+const folderOf = (f) => { const p = f.webkitRelativePath || ''; const i = p.lastIndexOf('/'); return i > 0 ? p.slice(0, i) : ''; };
+/* Pochette choisie à la main : stockée dans la base de l'application, jamais dans le fichier audio d'origine. */
+async function setTrackCover(ids, file, quiet) {
+  let th;
+  try { th = await makeThumb(file); } catch { toast('Image illisible'); return; }
+  for (const id of ids) {
+    const t = S.tracks.get(id); if (!t) continue;
+    if (t.coverUrl) URL.revokeObjectURL(t.coverUrl);
+    t.cover = th.cover; t.color = th.color; t.coverUrl = URL.createObjectURL(th.cover); t.manualCover = true;
+    await DB.putTrack(t).catch(() => {});
+  }
+  renderSide(); renderPlayer(); refreshView();
+  if (!quiet) toast(ids.length > 1 ? 'Pochette appliquée à l’album' : 'Pochette modifiée');
+}
+function pickCover(ids) { coverTargets = ids; coverInput.value = ''; coverInput.click(); }
+let coverTargets = [];
 const classifyAll = () => NEXA.intel.classify([...S.tracks.values()]);
 let importing = false;
 async function importFiles(list) {
   if (importing) { toast('Import déjà en cours…'); return; }
-  const files = [...list].filter((f) => f.type.startsWith('audio/') || MIME[extOf(f.name)]);
+  const all = [...list];
+  const files = all.filter((f) => f.type.startsWith('audio/') || MIME[extOf(f.name)]);
   if (!files.length) { toast('Aucun fichier audio trouvé'); return; }
   importing = true;
-  const sigs = new Set([...S.tracks.values()].map((t) => t.sig));
+  // Fichiers de paroles (.lrc) choisis avec la musique : associés par nom de fichier identique
+  const baseName = (n) => norm(n.replace(/\.[^.]+$/, '').trim());
+  const lrcs = new Map(all.filter((f) => extOf(f.name) === 'lrc').map((f) => [baseName(f.name), f]));
+  const bySig = new Map([...S.tracks.values()].map((t) => [t.sig, t]));
+  const sigs = new Set(bySig.keys());
   let added = 0, dup = 0, failed = 0;
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     progressToast(`Import ${i + 1} / ${files.length}…`, i, files.length);
     const sig = f.name + '|' + f.size;
-    if (sigs.has(sig)) { dup++; continue; }
+    if (sigs.has(sig)) {
+      dup++;
+      const ex = bySig.get(sig), fo = folderOf(f);
+      if (ex && !ex.folder && fo) { ex.folder = fo; DB.putTrack(ex).catch(() => {}); }   // un doublon ré-importé depuis un dossier apprend son dossier
+      continue;
+    }
     try {
       const type = f.type || MIME[extOf(f.name)] || 'audio/mpeg';
       const blob = f.type ? f : f.slice(0, f.size, type);
       const [meta, duration] = await Promise.all([readMeta(f), probeDuration(blob)]);
       const t = {
-        id: uid(), sig, title: meta.title, artist: meta.artist, album: meta.album, genre: meta.genre || '', year: meta.year || 0, no: meta.no || 0,
+        id: uid(), sig, title: meta.title, artist: meta.artist, album: meta.album, genre: meta.genre || '', year: meta.year || 0, no: meta.no || 0, folder: folderOf(f),
         duration, cover: meta.cover || null, color: meta.color || '', addedAt: Date.now() + i, liked: false, plays: 0, skips: 0, lastPlayed: 0, hours: new Array(24).fill(0), size: f.size
       };
       await DB.saveTrack(t, blob);
-      S.tracks.set(t.id, hydrate(t)); sigs.add(sig); added++;
+      let lyr = meta.lyrics ? { text: meta.lyrics, src: 'embedded' } : null;
+      const lf = lrcs.get(baseName(f.name));
+      if (lf) { try { lyr = { text: await lf.text(), src: 'file' }; } catch { /* ignore */ } }
+      if (lyr && lyr.text && lyr.text.trim()) { lyr.synced = /\[\d{1,3}:\d{2}/.test(lyr.text); await DB.put('lyrics', lyr, t.id).catch(() => {}); }
+      S.tracks.set(t.id, hydrate(t)); sigs.add(sig); bySig.set(sig, t); added++;
     } catch (e) {
       if (e && e.name === 'QuotaExceededError') { toast('Stockage de l’appareil plein'); failed++; break; }
       console.error(e); failed++;
@@ -475,6 +532,7 @@ function renderPlayer() {
   document.title = `${t.title} · ${t.artist}`;
   const bg = $('#np-bg'); if (bg) { if (t.coverUrl) { bg.src = t.coverUrl; bg.style.display = ''; } else { bg.removeAttribute('src'); bg.style.display = 'none'; } }
   updateLike(); updatePlayState(); updateActiveRows(); updateMediaSession(t); updateNextUp();
+  hooks.onTrack.forEach((f) => { try { f(t); } catch (e) { console.error(e); } });
 }
 function updateNextUp() {
   const el = $('#np-next'); if (!el) return;
@@ -488,7 +546,7 @@ function updateLike() {
 function updatePlayState() {
   const playing = !audio.paused && !!audio.src;
   document.body.classList.toggle('is-playing', playing);
-  $$('[data-act=toggle] use').forEach((u) => u.setAttribute('href', playing ? '#i-pause' : '#i-play'));
+  $$('[data-act=toggle] use, [data-act=resume] use').forEach((u) => u.setAttribute('href', playing ? '#i-pause' : '#i-play'));
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
 }
 function updateActiveRows() {
@@ -531,7 +589,11 @@ audio.addEventListener('loadedmetadata', () => {
 });
 audio.addEventListener('play', updatePlayState);
 audio.addEventListener('pause', () => { updatePlayState(); savePos(); });
-audio.addEventListener('ended', () => next(true));
+audio.addEventListener('ended', () => {
+  // Minuteur « à la fin du titre » : on s'arrête et on prépare le titre suivant sans le lancer
+  if (hooks.stopAtEnd && hooks.stopAtEnd()) { if (S.qi < S.queue.length - 1) { S.qi++; loadCurrent(false); renderQueue(); } return; }
+  next(true);
+});
 audio.addEventListener('error', () => { if (audio.src) toast('Format audio non pris en charge par ce navigateur'); });
 setInterval(() => { if (!audio.paused && !document.hidden) savePos(); }, 10000);
 document.addEventListener('visibilitychange', () => { if (document.hidden) { savePos(); persistQueue(); } else updateProgress(); });
@@ -539,8 +601,9 @@ window.addEventListener('pagehide', () => { savePos(); persistQueue(); });
 
 /* Volume */
 const vol = $('#vol');
-function setVolume(v) { audio.volume = v / 100; vol.value = v; vol.style.setProperty('--p', v + '%'); LS.set('vol', v); updateMute(); }
-function updateMute() { $$('[data-act=mute] use').forEach((u) => u.setAttribute('href', audio.muted || audio.volume === 0 ? '#i-mute' : '#i-volume')); }
+function applyVolume() { const g = Math.min(1, ...Object.values(gains)); audio.volume = Math.max(0, Math.min(1, (S.vol / 100) * g)); }
+function setVolume(v) { S.vol = v; applyVolume(); vol.value = v; vol.style.setProperty('--p', v + '%'); LS.set('vol', v); updateMute(); }
+function updateMute() { $$('[data-act=mute] use').forEach((u) => u.setAttribute('href', audio.muted || S.vol === 0 ? '#i-mute' : '#i-volume')); }
 vol.addEventListener('input', () => { audio.muted = false; setVolume(+vol.value); });
 
 /* Commandes du système (écran verrouillé, casque, notification) */
@@ -665,6 +728,7 @@ function openTrackMenu(id, opts = {}) {
     { icon: 'plus', label: 'Ajouter à la file d’attente', action: () => queueAdd([id]) },
     { icon: 'note', label: 'Ajouter à une playlist', action: () => pickPlaylist([id]) }
   ];
+  items.push({ icon: 'image', label: 'Changer la pochette', action: () => pickCover([id]) });
   if (opts.playlistId) items.push({ icon: 'x', label: 'Retirer de cette playlist', action: () => removeFromPlaylist(opts.playlistId, id) });
   items.push({ icon: 'user', label: 'Voir l’artiste', action: () => { closeNP(); location.hash = '#/artist/' + encodeURIComponent(t.artist); } });
   if (t.album !== UNKNOWN_ALBUM) items.push({ icon: 'disc', label: 'Voir l’album', action: () => { closeNP(); location.hash = '#/album/' + encodeURIComponent(t.album); } });
@@ -731,7 +795,7 @@ function emptyHTML() {
   return `<div class="empty-state">
     <img src="logo.png" alt="">
     <h2>Bienvenue sur NEXA</h2>
-    <p>Ajoutez des fichiers audio depuis votre appareil. Ils restent dans l’application et se lisent partout, même sans internet.</p>
+    <p>Ajoutez de la musique depuis votre appareil. Elles restent dans l’application et vous suivent partout.</p>
     <button class="btn" data-act="import">${icon('upload')}Ajouter de la musique</button>
     <button class="chip" data-act="import-folder">${icon('folder')}Scanner un dossier</button>
   </div>`;
@@ -906,7 +970,12 @@ const core = {
   S, LS, view, main, $, $$, esc, icon, plural, fmt, fmtTotal, coll, byRecent, groupBy, allTracks, uniq,
   coverHTML, likedCover, playlistCover, firstWithCover, colorOf, hashColor,
   emptyHTML, collectionView, play, queueAdd, queueNext, toggleLike, toast, openSheet, closeSheet, promptSheet, confirmSheet,
-  syncInstallButtons: () => syncInstallButtons(), showStorage: () => showStorage(), audio
+  syncInstallButtons: () => syncInstallButtons(), showStorage: () => showStorage(), audio,
+  // Ajouts pour les modules (player.js, library.js)
+  DB, hooks, gains, applyVolume, norm, debounce, esc, UNKNOWN_ARTIST, UNKNOWN_ALBUM, listHead, getDur,
+  mountTrackList, cleanupLists, newPlaylistFlow, refreshView, toggle, next, prev, pickCover, openTrackMenu, menuSheet,
+  setTrackCover, coverInner, setCoverEl: (el, t) => setCover(el, t), saveState: () => saveState(), importFiles, savePlaylist, deletePlaylist,
+  get queueOpen() { return queuePanel.classList.contains('open'); }, npEl
 };
 
 /* Barre latérale */
@@ -945,6 +1014,7 @@ const ACT = {
   'set-name': () => promptSheet({ title: 'Votre prénom', value: LS.get('name', ''), placeholder: 'Prénom', ok: 'Enregistrer' }, (n) => { LS.set('name', n); route(); }),
   'clear-history': () => confirmSheet('Effacer l’historique et les statistiques d’écoute ? Vos titres et playlists restent intacts.', 'Effacer', clearHistory),
   'close-sheet': closeSheet,
+  resume: toggle,
   back: () => { if (history.length > 1) history.back(); else location.hash = '#/library'; },
   'play-all': () => { const c = view._ctx; if (c && c.ids.length) play(c.ids, c.ids[0]); },
   'shuffle-all': () => {
@@ -959,6 +1029,7 @@ const ACT = {
       items.push({ icon: 'queue', label: 'Lire ensuite', action: () => queueNext(c.ids) });
       items.push({ icon: 'plus', label: 'Ajouter à la file d’attente', action: () => queueAdd(c.ids) });
     }
+    if (c.kind === 'Album' && c.ids.length) items.push({ icon: 'image', label: 'Changer la pochette de l’album', action: () => pickCover(c.ids) });
     if (c.playlistId) {
       const p = S.playlists.find((x) => x.id === c.playlistId);
       items.push({ icon: 'edit', label: 'Renommer la playlist', action: () => promptSheet({ title: 'Renommer la playlist', value: p.name, ok: 'Enregistrer' }, async (n) => { p.name = n; await savePlaylist(p); refreshView(); }) });
@@ -974,10 +1045,11 @@ document.addEventListener('click', (e) => {
   if (!t) return;
   if (t.dataset.go) { location.hash = t.dataset.go; return; }
   if (t.dataset.shelf) { const l = view._lists && view._lists[t.dataset.shelf]; if (l) play(l, t.dataset.id); return; }
-  const f = ACT[t.dataset.act]; if (f) f(t, e);
+  const f = ACT[t.dataset.act] || NEXA.actions[t.dataset.act]; if (f) f(t, e);
 });
 fileInput.addEventListener('change', () => { importFiles(fileInput.files); fileInput.value = ''; });
 folderInput.addEventListener('change', () => { importFiles(folderInput.files); folderInput.value = ''; });
+coverInput.addEventListener('change', () => { const f = coverInput.files[0]; if (f && coverTargets.length) setTrackCover(coverTargets, f); coverInput.value = ''; });
 
 /* Glisser-déposer de fichiers (ordinateur) */
 window.addEventListener('dragover', (e) => e.preventDefault());
@@ -991,8 +1063,8 @@ document.addEventListener('keydown', (e) => {
   if (e.key === ' ') { e.preventDefault(); toggle(); }
   else if (e.key === 'ArrowRight') { e.shiftKey ? next(false) : (audio.currentTime = Math.min(getDur(), audio.currentTime + 5)); }
   else if (e.key === 'ArrowLeft') { e.shiftKey ? prev() : (audio.currentTime = Math.max(0, audio.currentTime - 5)); }
-  else if (e.key === 'ArrowUp' && tag !== 'input') { e.preventDefault(); setVolume(Math.min(100, Math.round(audio.volume * 100) + 5)); }
-  else if (e.key === 'ArrowDown' && tag !== 'input') { e.preventDefault(); setVolume(Math.max(0, Math.round(audio.volume * 100) - 5)); }
+  else if (e.key === 'ArrowUp' && tag !== 'input') { e.preventDefault(); setVolume(Math.min(100, S.vol + 5)); }
+  else if (e.key === 'ArrowDown' && tag !== 'input') { e.preventDefault(); setVolume(Math.max(0, S.vol - 5)); }
   else if (e.key.toLowerCase() === 'm') ACT.mute();
   else if (e.key.toLowerCase() === 's') ACT.shuffle();
 });
@@ -1017,6 +1089,7 @@ async function init() {
   NEXA.eq.init(audio, LS.get('eq', null));
   $$('.np-wave').forEach((w) => { w.innerHTML = Array.from({ length: 7 }, (_, i) => `<i style="--d:${(i * 0.13).toFixed(2)}s;--m:${(0.35 + ((i * 37) % 60) / 100).toFixed(2)}"></i>`).join(''); });
   initMediaSession();
+  NEXA.modules.forEach((fn) => { try { fn(core); } catch (e) { console.error(e); } });
   classifyAll(); renderSide(); route();
 
   // Reprise de la dernière lecture (en pause)

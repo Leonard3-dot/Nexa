@@ -1,7 +1,7 @@
 {
   "name": "NEXA Music",
   "short_name": "NEXA",
-  "description": "Votre musique, sans connexion. Lecteur immersif, recommandations et égaliseur.",
+  "description": "Ressentez chaque note. Lecteur immersif, recommandations et égaliseur.",
   "lang": "fr",
   "start_url": "./",
   "scope": "./",
