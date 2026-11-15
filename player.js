@@ -283,6 +283,7 @@ NEXA.defineModule((c) => {
   /* =====================================================================
      5. Réglages de lecture (Profil)
      ===================================================================== */
+  fx.setFade = (n) => { fx.fade = n; LS.set('fade', n); fadeSync(); };
   fx.summary = () => (fx.fade ? `Fondu ${fx.fade} s` : '') + (!fx.viz ? (fx.fade ? ' · ' : '') + 'Visualiseur coupé' : '');
   NEXA.actions['playback-settings'] = () => {
     const opts = [0, 2, 4, 6, 8, 10];

@@ -73,3 +73,19 @@ Dans `Info.plist` : `UIBackgroundModes` = `audio` ; `NSAppleMusicUsageDescriptio
 ## Palettes sobres (noir, blanc, bleus) et pochettes en ligne
 - 8 palettes ajoutées dans `themes.css` / `themes.js` : Cyberpunk Mât, Deep Ice, Dark Navy Executive, Midnight Aurora, Monochrome & Cyan Soft, Stealth Tech, Frosty Slate (clair), Polar Light (clair). Le sélecteur les range sous « Noir, blanc & bleus » ; NEXA Nuit et Northern Lights (violet / menthe) sont sous « Colorés ».
 - `covers.js` : recherche FACULTATIVE des pochettes manquantes (Profil → Pochettes en ligne). Désactivée par défaut. Source : iTunes Search API ; seuls artiste + album/titre sont envoyés ; une requête par album, une toutes les 3,2 s ; la pochette n'est acceptée que si l'artiste correspond ; l'image est ensuite enregistrée dans l'application (hors ligne). Jamais appliquée à un titre qui a déjà une pochette.
+
+## DJ · Ambiance (dj.js)
+- Profil → « DJ · Ambiance ». 6 ambiances : Énergie, Soirée, Détente, Concentration, Nuit, Sport ; curseur « Plus calme ↔ Plus intense » ; une ambiance est suggérée selon l'heure.
+- « Analyser mes titres » : décode un extrait (≈ 45 s) de chaque titre (Web Audio) et mesure énergie, tempo (BPM, ±2) et brillance ; résultat gardé dans la base. Sans analyse, l'ambiance se base sur le genre.
+- Chaque ambiance vise une zone d'énergie et de tempo ; les titres sont ordonnés pour que tempos et énergie évoluent en douceur ; 3 titres max par artiste. « Régénérer la suite » recalcule la file sans toucher au titre en cours.
+- Limite : l'enchaînement est un fondu (réglage « Enchaînement en fondu »), pas un mixage avec chevauchement des deux titres.
+
+## DJ Studio (djstudio.js) — Profil → « DJ Studio (2 platines) »
+- Deux platines : lecture, CUE, 3 repères (appui long = effacer), boucles 1/2/4/8 temps, tempo ±12 % avec verrou de tonalité, SYNC (tempo + calage sur le temps), nudge ±4 %, égaliseur 3 bandes, filtre passe-bas/haut, gain ; crossfader à puissance constante ; volume master avec compresseur.
+- Grille rythmique : chaque titre est décodé ; on cherche le BPM précis et la phase qui collent aux attaques de basses (test : 124 et 128 BPM retrouvés à 0,02 BPM près). Précision du calage ≈ 30 ms ; nudge pour affiner. Titre sans rythme marqué : pas de grille, seul le tempo est synchronisé.
+- Mixer A→B / B→A : lance l'autre platine synchronisée, crossfade (4–16 s) avec échange des basses (la sortante perd ses graves, l'entrante les gagne).
+- Auto-DJ : choisit une ambiance (dj.js), charge les titres à tour de rôle et mixe automatiquement quand il reste « durée + 2 s ».
+- Le lecteur principal est mis en pause à l'ouverture. Les commandes de la notification Android ne pilotent pas encore les platines.
+
+### DJ Studio v11 : console façon matériel
+Disposition paysage (platine A · table de mixage · platine B), mise à l'échelle automatique ; en portrait la console est tournée de 90°. Molettes (jog) qui tournent avec le disque (33 tours/min) : toucher et glisser = scratch (rafales de son, retour arrière approché par sauts) ; faders de pitch verticaux ; potards rotatifs GAIN / AIGUS / MÉD / GRAVES / FILTRE (double-appui = remise à zéro) ; fader de voie, vumètres à diodes, crossfader horizontal ; 8 pads par platine (3 repères, EFFACER, boucles 1/2/4/8) ; waveforms empilées avec grille de temps ; AUTO-DJ dans la barre du haut.

@@ -167,9 +167,11 @@ NEXA.defineView('profile', (c) => {
     </div>
     <h2 class="sec">Réglages</h2>
     <div class="glass panel list">
+      ${item('disc', 'DJ Studio (2 platines)', 'data-act="djstudio"', '')}
+      ${item('sparkle', 'DJ · Ambiance', 'data-act="dj"', '')}
       ${item('palette', 'Apparence et thèmes', 'data-act="theme"', NEXA.themes ? esc(NEXA.themes.current.name) : '')}
       ${NEXA.native && NEXA.native.available ? item('shield', 'Autorisations et arrière-plan', 'data-act="perms"', '') : ''}
-      ${item('image', 'Pochettes en ligne', 'data-act="covers"', c.LS.get('onlineCovers', false) ? 'Activé' : 'Désactivé')}
+      ${item('image', 'Pochettes en ligne', 'data-act="covers"', c.LS.get('onlineCovers', true) !== false ? 'Activé' : 'Désactivé')}
       ${item('sliders', 'Égaliseur', 'data-act="eq"', NEXA.eq.state.on ? NEXA.eq.state.preset : 'Désactivé')}
       ${item('wave', 'Réglages de lecture', 'data-act="playback-settings"', NEXA.fx ? NEXA.fx.summary() : '')}
       ${item('timer', 'Minuteur de sommeil', 'data-act="sleep"')}
@@ -181,7 +183,8 @@ NEXA.defineView('profile', (c) => {
       ${item('trash', 'Effacer l’historique d’écoute', 'data-act="clear-history"')}
     </div>
     <p class="muted fine" id="storage-info"></p>
-    <p class="muted fine">NEXA lit uniquement les fichiers que vous choisissez : aucun accès au reste du téléphone, aucune donnée envoyée sur Internet. Pour ajouter toute votre musique d’un coup, utilisez « Scanner un dossier ».</p>`;
+    <p class="muted fine">NEXA lit uniquement les fichiers que vous choisissez : aucun accès au reste du téléphone. Seule la recherche de pochettes, si elle est activée, envoie l’artiste et l’album sur Internet. Pour ajouter toute votre musique d’un coup, utilisez « Scanner un dossier ».</p>
+    <p class="muted fine">NEXA v11 · ${NEXA.native && NEXA.native.available ? 'application Android (APK)' : 'navigateur / site installé : pas de notification Android ni d’autorisations'}</p>`;
   c.syncInstallButtons(); c.showStorage();
 });
 

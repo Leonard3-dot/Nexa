@@ -100,7 +100,7 @@ const S = {
 };
 /* Crochets offerts aux modules (player.js…) : ils évitent de modifier le noyau pour chaque nouvelle fonction.
    gains : facteurs de volume temporaires (fondu, minuteur) ; le plus bas l'emporte. */
-const hooks = { stopAtEnd: null, onTrack: [] };
+const hooks = { stopAtEnd: null, onTrack: [], onImport: [] };
 const gains = {};
 
 const main = $('#main'), view = $('#view');
@@ -344,43 +344,66 @@ async function importFiles(list) {
   const bySig = new Map([...S.tracks.values()].map((t) => [t.sig, t]));
   const sigs = new Set(bySig.keys());
   let added = 0, dup = 0, failed = 0;
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i];
-    progressToast(`Import ${i + 1} / ${files.length}…`, i, files.length);
-    const sig = f.name + '|' + f.size;
-    if (sigs.has(sig)) {
-      dup++;
-      const ex = bySig.get(sig), fo = folderOf(f);
-      if (ex && !ex.folder && fo) { ex.folder = fo; DB.putTrack(ex).catch(() => {}); }   // un doublon ré-importé depuis un dossier apprend son dossier
-      continue;
+  /* Import en parallèle (4 fichiers à la fois) : la lecture des étiquettes, de la durée et l'écriture
+     dans la base se chevauchent, ce qui divise le temps d'import par 2 à 4 sur un téléphone. */
+  let next = 0, doneN = 0, quota = false;
+  const probeQ = [];
+  const worker = async () => {
+    while (!quota) {
+      const i = next++; if (i >= files.length) return;
+      const f = files[i];
+      const sig = f.name + '|' + f.size;
+      if (sigs.has(sig)) {
+        dup++;
+        const ex = bySig.get(sig), fo = folderOf(f);
+        if (ex && !ex.folder && fo) { ex.folder = fo; DB.putTrack(ex).catch(() => {}); }   // un doublon ré-importé depuis un dossier apprend son dossier
+      } else {
+        sigs.add(sig);
+        try {
+          const type = f.type || MIME[extOf(f.name)] || 'audio/mpeg';
+          const blob = f.type ? f : f.slice(0, f.size, type);
+          const meta = await readMeta(f), duration = meta.duration || 0;   // la durée exacte est lue ensuite, en arrière-plan : l'import n'attend plus chaque fichier
+          const t = {
+            id: uid(), sig, title: meta.title, artist: meta.artist, album: meta.album, genre: meta.genre || '', year: meta.year || 0, no: meta.no || 0, folder: folderOf(f),
+            duration, cover: meta.cover || null, color: meta.color || '', addedAt: Date.now() + i, liked: false, plays: 0, skips: 0, lastPlayed: 0, hours: new Array(24).fill(0), size: f.size
+          };
+          await DB.saveTrack(t, blob);
+          let lyr = meta.lyrics ? { text: meta.lyrics, src: 'embedded' } : null;
+          const lf = lrcs.get(baseName(f.name));
+          if (lf) { try { lyr = { text: await lf.text(), src: 'file' }; } catch { /* ignore */ } }
+          if (lyr && lyr.text && lyr.text.trim()) { lyr.synced = /\[\d{1,3}:\d{2}/.test(lyr.text); await DB.put('lyrics', lyr, t.id).catch(() => {}); }
+          const ht = hydrate(t); S.tracks.set(t.id, ht); bySig.set(sig, t); added++;
+          if (!duration) probeQ.push([ht, blob]);
+        } catch (e) {
+          sigs.delete(sig);
+          if (e && e.name === 'QuotaExceededError') { toast('Stockage de l’appareil plein'); failed++; quota = true; return; }
+          console.error(e); failed++;
+        }
+      }
+      doneN++;
+      progressToast(`Import ${doneN} / ${files.length}…`, doneN, files.length);
     }
-    try {
-      const type = f.type || MIME[extOf(f.name)] || 'audio/mpeg';
-      const blob = f.type ? f : f.slice(0, f.size, type);
-      const [meta, duration] = await Promise.all([readMeta(f), probeDuration(blob)]);
-      const t = {
-        id: uid(), sig, title: meta.title, artist: meta.artist, album: meta.album, genre: meta.genre || '', year: meta.year || 0, no: meta.no || 0, folder: folderOf(f),
-        duration, cover: meta.cover || null, color: meta.color || '', addedAt: Date.now() + i, liked: false, plays: 0, skips: 0, lastPlayed: 0, hours: new Array(24).fill(0), size: f.size
-      };
-      await DB.saveTrack(t, blob);
-      let lyr = meta.lyrics ? { text: meta.lyrics, src: 'embedded' } : null;
-      const lf = lrcs.get(baseName(f.name));
-      if (lf) { try { lyr = { text: await lf.text(), src: 'file' }; } catch { /* ignore */ } }
-      if (lyr && lyr.text && lyr.text.trim()) { lyr.synced = /\[\d{1,3}:\d{2}/.test(lyr.text); await DB.put('lyrics', lyr, t.id).catch(() => {}); }
-      S.tracks.set(t.id, hydrate(t)); sigs.add(sig); bySig.set(sig, t); added++;
-    } catch (e) {
-      if (e && e.name === 'QuotaExceededError') { toast('Stockage de l’appareil plein'); failed++; break; }
-      console.error(e); failed++;
-    }
-    if (i % 4 === 3) await new Promise((r) => setTimeout(r));
-  }
+  };
+  progressToast(`Import 0 / ${files.length}…`, 0, files.length);
+  await Promise.all(Array.from({ length: Math.min(4, files.length) }, worker));
   importing = false; classifyAll();
+  if (probeQ.length) {            // durées : 3 lectures à la fois, sans bloquer l'interface
+    let pi = 0;
+    Promise.all(Array.from({ length: 3 }, async () => {
+      while (pi < probeQ.length) {
+        const [t, blob] = probeQ[pi++];
+        const d = await probeDuration(blob);
+        if (d && S.tracks.has(t.id)) { t.duration = d; DB.putTrack(t).catch(() => {}); }
+      }
+    })).then(() => { refreshView(); });
+  }
   progressToast('Terminé', 1, 1);
   let msg = added ? `${plural(added, 'titre ajouté')}` : 'Aucun nouveau titre';
   if (dup) msg += ` · ${plural(dup, 'doublon ignoré').replace('doublons ignoré', 'doublons ignorés')}`;
   if (failed) msg += ` · ${failed} échec${failed > 1 ? 's' : ''}`;
   toast(msg, 3500);
   renderSide(); refreshView();
+  hooks.onImport.forEach((f) => { try { f(added); } catch (e) { console.error(e); } });
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 }
 
@@ -974,7 +997,7 @@ const core = {
   // Ajouts pour les modules (player.js, library.js)
   DB, hooks, gains, applyVolume, norm, debounce, esc, UNKNOWN_ARTIST, UNKNOWN_ALBUM, listHead, getDur,
   mountTrackList, cleanupLists, newPlaylistFlow, refreshView, toggle, next, prev, pickCover, openTrackMenu, menuSheet,
-  setTrackCover, coverInner, setCoverEl: (el, t) => setCover(el, t), saveState: () => saveState(), importFiles, savePlaylist, deletePlaylist,
+  renderQueue: () => renderQueue(), setShuffle: (v) => setShuffle(v), setTrackCover, coverInner, setCoverEl: (el, t) => setCover(el, t), saveState: () => saveState(), importFiles, savePlaylist, deletePlaylist,
   get queueOpen() { return queuePanel.classList.contains('open'); }, npEl
 };
 

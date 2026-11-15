@@ -3,6 +3,9 @@
 (function (g) {
 'use strict';
 const NEXA = g.NEXA = g.NEXA || {};
+NEXA.modules = NEXA.modules || [];
+NEXA.defineModule = (fn) => NEXA.modules.push(fn);   // un module reçoit « core » au démarrage
+NEXA.actions = NEXA.actions || {};                    // actions de boutons (data-act) ajoutées par les modules
 
 const ID3V1_GENRES = ['Blues','Classic Rock','Country','Dance','Disco','Funk','Grunge','Hip-Hop','Jazz','Metal','New Age','Oldies','Other','Pop','R&B','Rap','Reggae','Rock','Techno','Industrial','Alternative','Ska','Death Metal','Pranks','Soundtrack','Euro-Techno','Ambient','Trip-Hop','Vocal','Jazz+Funk','Fusion','Trance','Classical','Instrumental','Acid','House','Game','Sound Clip','Gospel','Noise','Alternative Rock','Bass','Soul','Punk','Space','Meditative','Instrumental Pop','Instrumental Rock','Ethnic','Gothic','Darkwave','Techno-Industrial','Electronic','Pop-Folk','Eurodance','Dream','Southern Rock','Comedy','Cult','Gangsta','Top 40','Christian Rap','Pop/Funk','Jungle','Native American','Cabaret','New Wave','Psychedelic','Rave','Showtunes','Trailer','Lo-Fi','Tribal','Acid Punk','Acid Jazz','Polka','Retro','Musical','Rock & Roll','Hard Rock'];
 
@@ -92,6 +95,7 @@ function readItem(u8, dv, s, e, type, out) {
         else if (type === '©alb') out.album = v;
         else if (type === '©gen') out.genre = v;
         else if (type === '©day') out.year = cleanYear(v);
+        else if (type === '©lyr') out.lyrics = v;
       }
       return;
     }
@@ -124,6 +128,7 @@ async function parseFLAC(file) {
           else if (key === 'ALBUM') out.album = val; else if (key === 'GENRE') out.genre = val;
           else if (key === 'DATE' || key === 'YEAR') out.year = cleanYear(val);
           else if (key === 'TRACKNUMBER') out.no = parseInt(val, 10) || 0;
+          else if (key === 'LYRICS' || key === 'UNSYNCEDLYRICS') out.lyrics = val;
         }
       } else {
         let p = 4; const ml = dv.getUint32(p); p += 4 + ml;
@@ -138,5 +143,51 @@ async function parseFLAC(file) {
   return out;
 }
 
-NEXA.meta = { cleanGenre, cleanYear, parseID3v1, parseMP4, parseFLAC, ID3V1_GENRES };
+/* ---------- OGG Vorbis / Opus ---------- */
+function flacPicture(b) {
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  let p = 4; const ml = dv.getUint32(p); p += 4 + ml;
+  const dl = dv.getUint32(p); p += 4 + dl + 16;
+  const il = dv.getUint32(p); p += 4;
+  const img = b.slice(p, p + il);
+  return new Blob([img], { type: sniffImg(img) || 'image/jpeg' });
+}
+async function parseOgg(file) {
+  const out = {};
+  const buf = await slice(file, 0, Math.min(file.size, 3 * 1048576));
+  if (latin(buf, 0, 4) !== 'OggS') return out;
+  // Reconstitue les 2 premiers paquets (identification, puis commentaires) à partir des pages Ogg
+  const packets = []; let cur = [], curLen = 0, p = 0;
+  while (p + 27 <= buf.length && packets.length < 2) {
+    if (latin(buf, p, p + 4) !== 'OggS') break;
+    const nseg = buf[p + 26]; let q = p + 27 + nseg, off = q;
+    for (let i = 0; i < nseg && packets.length < 2; i++) {
+      const l = buf[p + 27 + i];
+      cur.push(buf.subarray(off, off + l)); curLen += l; off += l;
+      if (l < 255) { const pk = new Uint8Array(curLen); let o = 0; cur.forEach((c) => { pk.set(c, o); o += c.length; }); packets.push(pk); cur = []; curLen = 0; }
+    }
+    p = q + buf.subarray(p + 27, p + 27 + nseg).reduce((a, b) => a + b, 0);
+  }
+  const pk = packets[1]; if (!pk) return out;
+  let s;
+  if (latin(pk, 0, 8) === 'OpusTags') s = 8; else if (pk[0] === 3 && latin(pk, 1, 7) === 'vorbis') s = 7; else return out;
+  const dv = new DataView(pk.buffer, pk.byteOffset, pk.byteLength);
+  let q = s; const vl = dv.getUint32(q, true); q += 4 + vl;
+  const n = dv.getUint32(q, true); q += 4;
+  for (let i = 0; i < n && q + 4 <= pk.length; i++) {
+    const l = dv.getUint32(q, true); q += 4;
+    const str = utf8(pk, q, q + l); q += l;
+    const k = str.indexOf('='); if (k < 0) continue;
+    const key = str.slice(0, k).toUpperCase(), val = str.slice(k + 1).trim();
+    if (key === 'TITLE') out.title = val; else if (key === 'ARTIST') out.artist = val; else if (key === 'ALBUMARTIST') out.albumArtist = val;
+    else if (key === 'ALBUM') out.album = val; else if (key === 'GENRE') out.genre = val;
+    else if (key === 'DATE' || key === 'YEAR') out.year = cleanYear(val);
+    else if (key === 'TRACKNUMBER') out.no = parseInt(val, 10) || 0;
+    else if (key === 'LYRICS' || key === 'UNSYNCEDLYRICS') out.lyrics = val;
+    else if (key === 'METADATA_BLOCK_PICTURE' && !out.coverBlob) { try { const bin = atob(val); const u = new Uint8Array(bin.length); for (let j = 0; j < bin.length; j++) u[j] = bin.charCodeAt(j); out.coverBlob = flacPicture(u); } catch { /* image illisible */ } }
+  }
+  return out;
+}
+
+NEXA.meta = { cleanGenre, cleanYear, parseID3v1, parseMP4, parseFLAC, parseOgg, ID3V1_GENRES };
 })(typeof window !== 'undefined' ? window : globalThis);
