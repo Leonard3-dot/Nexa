@@ -135,13 +135,15 @@ public class NexaMediaPlugin extends Plugin {
         JSArray out = new JSArray();
         String[] cols = { MediaStore.Audio.Media._ID, MediaStore.Audio.Media.DISPLAY_NAME, MediaStore.Audio.Media.SIZE,
                           MediaStore.Audio.Media.DATA, MediaStore.Audio.Media.MIME_TYPE };
-        String sel = MediaStore.Audio.Media.IS_MUSIC + " != 0 AND " + MediaStore.Audio.Media.DURATION + " > 30000";
+        String sel = MediaStore.Audio.Media.IS_RINGTONE + " = 0 AND " + MediaStore.Audio.Media.IS_NOTIFICATION + " = 0 AND "
+                   + MediaStore.Audio.Media.IS_ALARM + " = 0 AND " + MediaStore.Audio.Media.DURATION + " > 30000";
         try (Cursor c = getContext().getContentResolver().query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, cols, sel, null,
                 MediaStore.Audio.Media.DATE_ADDED + " DESC")) {
             if (c != null) while (c.moveToNext()) {
                 JSObject o = new JSObject();
                 o.put("name", c.getString(1)); o.put("size", c.getLong(2));
                 o.put("path", c.getString(3)); o.put("mime", c.getString(4));
+                o.put("uri", "content://media/external/audio/media/" + c.getLong(0));
                 out.put(o);
             }
         } catch (Exception e) { call.reject("Lecture de la médiathèque impossible : " + e.getMessage()); return; }

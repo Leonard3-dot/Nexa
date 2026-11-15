@@ -50,7 +50,7 @@ NEXA.defineView('home', (c) => {
   const { view, esc, icon, plural } = c;
   const all = c.allTracks(), now = Date.now();
   const name = c.LS.get('name', '');
-  const top = `<header class="home-head"><div class="brand-mini"><img src="logo.png" alt="" width="40" height="40"><div class="wm"><b>NEXA</b><small>Feel the music</small></div></div>
+  const top = `<header class="home-head"><div class="brand-mini"><img src="logo.png" alt="" width="40" height="40"><div class="wm"><b>NEXA</b><small>Ressentez chaque note.</small></div></div>
     <div class="head-actions"><button class="icon-btn install glass" data-act="install" aria-label="Installer l’application" hidden>${icon('download')}</button>
     <button class="icon-btn glass" data-act="import" aria-label="Ajouter de la musique">${icon('upload')}</button>
     <button class="icon-btn glass" data-go="#/profile" aria-label="Profil">${icon('user')}</button></div></header>`;
@@ -166,7 +166,11 @@ NEXA.defineView('profile', (c) => {
       ${h.topArtist ? `<div class="pf-tags"><span class="chip on-grad">${icon('user')}${esc(h.topArtist.name)}</span>${h.topFamily ? `<span class="chip on-grad">${icon('disc')}${esc(h.topFamily.name)}</span>` : ''}<span class="chip on-grad">${icon('clock')}${Math.round(h.perDay * 10) / 10} / jour</span></div>` : ''}
     </div>
     <h2 class="sec">Réglages</h2>
+    ${NEXA.native && NEXA.native.available
+      ? `<div class="note-card glass">${icon('shield')}<div><b>Application Android (APK) · actif</b><p class="muted">Notification de lecture, écran verrouillé, arrière-plan et scan complet du téléphone sont disponibles.</p></div></div>`
+      : `<div class="note-card glass">${icon('shield')}<div><b>Site web · fonctions Android inactives</b><p class="muted">Vous n'êtes pas dans l'APK : pas de notification, pas d'autorisations, pas de scan complet. Installez le dernier APK (GitHub → Actions → Artifacts) par-dessus l'ancien.</p></div></div>`}
     <div class="glass panel list">
+      ${item('folder', 'Scanner tout le téléphone', 'data-act="scanphone"', NEXA.native && NEXA.native.available ? '' : 'APK requis')}
       ${item('disc', 'DJ Studio (2 platines)', 'data-act="djstudio"', '')}
       ${item('sparkle', 'DJ · Ambiance', 'data-act="dj"', '')}
       ${item('palette', 'Apparence et thèmes', 'data-act="theme"', NEXA.themes ? esc(NEXA.themes.current.name) : '')}
@@ -183,8 +187,8 @@ NEXA.defineView('profile', (c) => {
       ${item('trash', 'Effacer l’historique d’écoute', 'data-act="clear-history"')}
     </div>
     <p class="muted fine" id="storage-info"></p>
-    <p class="muted fine">NEXA lit uniquement les fichiers que vous choisissez : aucun accès au reste du téléphone. Seule la recherche de pochettes, si elle est activée, envoie l’artiste et l’album sur Internet. Pour ajouter toute votre musique d’un coup, utilisez « Scanner un dossier ».</p>
-    <p class="muted fine">NEXA v11 · ${NEXA.native && NEXA.native.available ? 'application Android (APK)' : 'navigateur / site installé : pas de notification Android ni d’autorisations'}</p>`;
+    <p class="muted fine">NEXA ne lit votre musique que lorsque vous touchez « Scanner » ou « Ajouter » : rien n’est envoyé ailleurs. Seule la recherche de pochettes, si elle est activée, envoie l’artiste et l’album sur Internet. Pour ajouter toute votre musique d’un coup, utilisez « Scanner un dossier ».</p>
+    <p class="muted fine">NEXA v13 · ${NEXA.native && NEXA.native.available ? 'application Android (APK)' : 'navigateur / site installé : pas de notification Android ni d’autorisations'}</p>`;
   c.syncInstallButtons(); c.showStorage();
 });
 

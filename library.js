@@ -47,7 +47,7 @@ NEXA.defineView('library', (c, arg) => {
   view.innerHTML = `
     <div class="page-head"><h1>Bibliothèque</h1><div class="head-actions">
       <button class="icon-btn" data-act="import" title="Ajouter de la musique" aria-label="Ajouter de la musique">${icon('upload')}</button>
-      <button class="icon-btn" data-act="import-folder" title="Scanner un dossier" aria-label="Scanner un dossier">${icon('folder')}</button>
+      <button class="icon-btn" data-act="scanphone" title="Scanner tout le téléphone" aria-label="Scanner tout le téléphone">${icon('folder')}</button>
       <button class="icon-btn" data-act="new-playlist" title="Nouvelle playlist" aria-label="Nouvelle playlist">${icon('plus')}</button></div></div>
     <div class="tabs-row" id="lib-tabs">${TABS.map(([k, l]) => `<button class="chip${tab === k ? ' on' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>
     <div class="lib-tools" id="lib-tools"></div>

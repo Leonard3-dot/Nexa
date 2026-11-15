@@ -819,7 +819,8 @@ function emptyHTML() {
     <img src="logo.png" alt="">
     <h2>Bienvenue sur NEXA</h2>
     <p>Ajoutez de la musique depuis votre appareil. Elles restent dans l’application et vous suivent partout.</p>
-    <button class="btn" data-act="import">${icon('upload')}Ajouter de la musique</button>
+    <button class="btn" data-act="scanphone">${icon('folder')}Scanner tout le téléphone</button>
+    <button class="chip" data-act="import">${icon('upload')}Ajouter des fichiers</button>
     <button class="chip" data-act="import-folder">${icon('folder')}Scanner un dossier</button>
   </div>`;
 }

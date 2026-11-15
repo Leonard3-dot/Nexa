@@ -89,3 +89,11 @@ Dans `Info.plist` : `UIBackgroundModes` = `audio` ; `NSAppleMusicUsageDescriptio
 
 ### DJ Studio v11 : console façon matériel
 Disposition paysage (platine A · table de mixage · platine B), mise à l'échelle automatique ; en portrait la console est tournée de 90°. Molettes (jog) qui tournent avec le disque (33 tours/min) : toucher et glisser = scratch (rafales de son, retour arrière approché par sauts) ; faders de pitch verticaux ; potards rotatifs GAIN / AIGUS / MÉD / GRAVES / FILTRE (double-appui = remise à zéro) ; fader de voie, vumètres à diodes, crossfader horizontal ; 8 pads par platine (3 repères, EFFACER, boucles 1/2/4/8) ; waveforms empilées avec grille de temps ; AUTO-DJ dans la barre du haut.
+
+## v12 — Scan du téléphone en un geste, autorisations au démarrage, pochettes diagnostiquées
+- « Scanner tout le téléphone » (écran d'accueil, Bibliothèque, Profil) : demande l'autorisation « Fichiers audio » si besoin, lit toute la médiathèque Android (sans sonneries/alarmes) et importe tout par lots, sans choisir fichier par fichier. **APK uniquement** : un site web n'a pas ce droit.
+- Au premier lancement de l'APK, la fenêtre « Autorisations » s'ouvre seule (notifications, batterie, fichiers audio).
+- Profil : un bandeau indique si vous êtes dans l'APK (actif) ou sur le site (fonctions Android inactives).
+- Pochettes : Profil → Pochettes en ligne → « Tester la connexion », « Tout réessayer », et message d'erreur réel.
+- Correctif : le service worker ne met plus en cache les fichiers du téléphone lus dans l'APK.
+- Le workflow s'arrête avec un message clair si un fichier Java manque à la racine du dépôt.

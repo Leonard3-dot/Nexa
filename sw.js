@@ -1,6 +1,6 @@
 /* NEXA Music — service worker : l'application s'ouvre sans connexion.
    Changez VERSION à chaque mise à jour du code pour forcer le rafraîchissement. */
-const VERSION = 'nexa-v11';
+const VERSION = 'nexa-v13';
 const ASSETS = [
   './', './index.html', './style.css', './themes.css', './themes.js', './native.js', './covers.js', './dj.js', './djstudio.js', './app.js', './pages.js', './library.js', './player.js', './meta.js', './intel.js', './eq.js',
   './manifest.webmanifest', './logo.png', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'
@@ -24,6 +24,7 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
+  if (url.pathname.startsWith('/_capacitor_')) return;   // fichiers du téléphone (APK) : jamais mis en cache
 
   e.respondWith((async () => {
     const cache = await caches.open(VERSION);

@@ -13,7 +13,7 @@ NEXA.defineModule((c) => {
   const missing = () => [...S.tracks.values()].filter((t) => !t.coverUrl);
   const known = (v) => v && v !== c.UNKNOWN_ARTIST && v !== c.UNKNOWN_ALBUM;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  let busy = false, stop = false;
+  let busy = false, stop = false, lastErr = '';
 
   /* iTunes n'envoie pas toujours les en-têtes CORS : on l'interroge en JSONP (balise <script>), qui marche partout. */
   const jsonp = (url) => new Promise((res, rej) => {
@@ -39,6 +39,15 @@ NEXA.defineModule((c) => {
       return new Blob([u8], { type: ct.startsWith('image/') ? ct : 'image/jpeg' });
     } catch { return null; }
   }
+  async function nativeJson(url) {
+    const H = g.Capacitor && g.Capacitor.Plugins && g.Capacitor.Plugins.CapacitorHttp;
+    if (!H) return null;
+    try {
+      const r = await H.request({ url, method: 'GET', connectTimeout: 10000, readTimeout: 15000 });
+      if (r.status !== 200) return null;
+      return typeof r.data === 'string' ? JSON.parse(r.data) : r.data;
+    } catch { return null; }
+  }
   async function imageBlob(url) {
     const nb = await nativeBlob(url); if (nb) return nb;
     try { const r = await fetch(url); if (r.ok) { const b = await r.blob(); if (b.type.startsWith('image/')) return b; } } catch { /* repli ci-dessous */ }
@@ -53,7 +62,8 @@ NEXA.defineModule((c) => {
 
   async function fromItunes({ artist, album, title }, album_, a) {
     const q = [a ? artist : '', album_ ? album : title].join(' ').trim();
-    const d = await jsonp('https://itunes.apple.com/search?media=music&limit=8&entity=' + (album_ ? 'album' : 'song') + '&term=' + encodeURIComponent(q));
+    const url = 'https://itunes.apple.com/search?media=music&limit=8&entity=' + (album_ ? 'album' : 'song') + '&term=' + encodeURIComponent(q);
+    const d = (await nativeJson(url)) || (await jsonp(url));
     const hit = (d.results || []).find((r) => r.artworkUrl100 && (a ? sameArtist(r.artistName, artist) : norm(r.trackName || r.collectionName || '') === norm(album_ ? album : title)));
     return hit ? imageBlob(hit.artworkUrl100.replace(/\d+x\d+bb/, '600x600bb')) : null;
   }
@@ -103,7 +113,7 @@ NEXA.defineModule((c) => {
         if (blob) { await c.setTrackCover(grp.map((t) => t.id), blob, true); found += grp.length; }
         else for (const t of grp) { t.coverTried = Date.now(); c.DB.putTrack(t).catch(() => {}); }
         errs = 0;
-      } catch (e) { if (++errs >= 3) break; }          // réseau coupé / limite atteinte : on s'arrête proprement
+      } catch (e) { lastErr = (e && e.message) || 'réseau'; if (++errs >= 3) break; }          // réseau coupé / limite atteinte : on s'arrête proprement
       tried++;
       await sleep(GAP);
     }
@@ -139,6 +149,8 @@ NEXA.defineModule((c) => {
       <label class="eq-top"><span>Chercher les pochettes manquantes</span><input type="checkbox" class="switch" id="cv-on"${enabled() ? ' checked' : ''}></label>
       <p class="s-msg" id="cv-info">${n ? `${n} titre(s) sans pochette.` : 'Tous vos titres ont une pochette.'}</p>
       <div class="s-row"><button class="btn sec" id="cv-go" ${n ? '' : 'disabled'}>Chercher maintenant</button></div>
+      <div class="s-row"><button class="btn sec" id="cv-retry">Tout réessayer (oublier les échecs)</button></div>
+      <div class="s-row"><button class="btn sec" id="cv-test">Tester la connexion</button></div>
       <div class="s-row"><button class="btn" data-done>Terminé</button></div>`, (s) => {
       s.querySelector('#cv-on').onchange = (e) => LS.set('onlineCovers', e.target.checked);
       const go = s.querySelector('#cv-go'), info = s.querySelector('#cv-info');
@@ -148,7 +160,23 @@ NEXA.defineModule((c) => {
         go.textContent = 'Arrêter';
         const r = await run(missing(), (i, tot, f, end) => { if (!end) info.textContent = `Recherche… ${i} / ${tot} albums · ${f} pochette(s) trouvée(s)`; });
         go.textContent = 'Chercher maintenant';
-        info.textContent = `${r.found} titre(s) ont reçu une pochette` + (r.aborted ? ' (arrêté)' : r.tried < r.total ? ' (interrompu : connexion ou limite)' : '') + '.';
+        info.textContent = `${r.found} titre(s) ont reçu une pochette` + (r.aborted ? ' (arrêté)' : r.tried < r.total ? ` (interrompu : ${lastErr || 'connexion ou limite'})` : '') + (r.found === 0 && r.tried === r.total && r.total ? ' — aucun résultat trouvé (titres sans artiste/album connus ?)' : '') + '.';
+      };
+      s.querySelector('#cv-retry').onclick = () => {
+        let k = 0; for (const t of S.tracks.values()) if (t.coverTried && !t.coverUrl) { delete t.coverTried; c.DB.putTrack(t).catch(() => {}); k++; }
+        info.textContent = `${k} titre(s) remis dans la file. Touchez « Chercher maintenant ».`; go.disabled = false;
+      };
+      s.querySelector('#cv-test').onclick = async () => {
+        info.textContent = 'Test en cours…';
+        const mode = (g.Capacitor && g.Capacitor.Plugins && g.Capacitor.Plugins.CapacitorHttp) ? 'APK' : 'site web';
+        try {
+          const u = 'https://itunes.apple.com/search?media=music&limit=1&entity=album&term=' + encodeURIComponent('Daft Punk Discovery');
+          const d = (await nativeJson(u)) || (await jsonp(u));
+          const hit = (d.results || [])[0];
+          if (!hit) { info.textContent = `[${mode}] iTunes répond mais sans résultat.`; return; }
+          const b = await imageBlob(hit.artworkUrl100.replace(/\d+x\d+bb/, '300x300bb'));
+          info.textContent = b ? `[${mode}] Connexion OK : recherche et image téléchargée (${Math.round(b.size / 1024)} Ko).` : `[${mode}] iTunes répond, mais le téléchargement de l'image échoue.`;
+        } catch (e) { info.textContent = `[${mode}] Échec : ${(e && e.message) || 'réseau'} — internet bloqué pour cette application.`; }
       };
       s.querySelector('[data-done]').onclick = () => { stop = true; c.closeSheet(); };
     });
